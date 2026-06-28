@@ -1,0 +1,22 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+*env/
+.venv/
+
+# Model weights & downloaded assets
+# (YOLO weights auto-download via ultralytics; .task bundles via download_models.sh)
+*.pt
+models/*.task
+
+# Runtime outputs
+shots/
+testimg/out_*
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
