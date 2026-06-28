@@ -28,7 +28,7 @@ from vision_demo import draw_hud, SHOTS  # noqa: E402
 
 from perception import GestureSource, ObjectSource          # noqa: E402
 from decision import GestureController                       # noqa: E402
-from actuators import make_actuator                          # noqa: E402
+from actuators import make_actuator, SerialServo             # noqa: E402
 
 
 def main():
@@ -51,7 +51,12 @@ def main():
     if args.actuator == "hid":
         actuator = make_actuator("hid", live=args.live_hid)
     elif args.actuator == "serial":
-        actuator = make_actuator("serial", port=args.serial_port)
+        port = args.serial_port or SerialServo.find_arduino_port()
+        if port:
+            print(f"serial: using {port} (LIVE)")
+        else:
+            print("serial: no board found -> dry-run (prints servo us, sends nothing)")
+        actuator = make_actuator("serial", port=port, dry_run=(port is None))
     else:
         actuator = make_actuator("sim")
     print("Ready.")

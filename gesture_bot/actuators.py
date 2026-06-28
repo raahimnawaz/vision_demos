@@ -165,37 +165,53 @@ class SerialServo(Actuator):
     name = "serial"
 
     def __init__(self, port=None, baud=115200, wheel_base=0.3, v_max=1.0,
-                 dry_run=True):
+                 dry_run=True, transport=None):
         self.wheel_base = wheel_base
         self.v_max = v_max
-        self.dry_run = dry_run or port is None
         self._last_cmd = "-"
-        self._ser = None
-        if not self.dry_run:
+        self._transport = transport          # any object with .write()/.close()
+        if transport is not None:            # injected (e.g. for tests)
+            self.dry_run = False
+        elif port and not dry_run:           # open a real serial port
             import serial  # pyserial
-            self._ser = serial.Serial(port, baud, timeout=0.1)
-            time.sleep(2.0)  # let the board reset
+            self._transport = serial.Serial(port, baud, timeout=0.1)
+            time.sleep(2.0)                  # let the board reset
+            self.dry_run = False
+        else:                                # no port -> just format, don't send
+            self.dry_run = True
+
+    @staticmethod
+    def find_arduino_port():
+        """Best-effort autodetect of an Arduino USB serial device, or None."""
+        from serial.tools import list_ports
+        for p in list_ports.comports():
+            dev = p.device or ""
+            if any(k in dev for k in ("usbmodem", "usbserial", "ttyACM", "ttyUSB")):
+                return dev
+        return None
 
     def _to_us(self, wheel_speed):
         """Map wheel linear speed [-v_max, v_max] -> servo us [1000, 2000]."""
         frac = max(-1.0, min(1.0, wheel_speed / self.v_max))
         return int(1500 + frac * 500)
 
+    def _write(self, line):
+        self._last_cmd = line.strip()
+        if self._transport is not None:
+            self._transport.write(line.encode())
+
     def apply(self, linear_x, angular_z, dt):
         left, right = diff_drive(linear_x, angular_z, self.wheel_base)
-        lu, ru = self._to_us(left), self._to_us(right)
-        line = f"{lu},{ru}\n"
-        self._last_cmd = line.strip()
-        if not self.dry_run and self._ser:
-            self._ser.write(line.encode())
+        self._write(f"{self._to_us(left)},{self._to_us(right)}\n")
 
     def telemetry(self):
         tag = "dry" if self.dry_run else "LIVE"
         return [f"serial[{tag}]: {self._last_cmd} us"]
 
     def close(self):
-        if self._ser:
-            self._ser.close()
+        self._write("1500,1500\n")           # failsafe: stop before disconnecting
+        if self._transport is not None:
+            self._transport.close()
 
 
 def make_actuator(kind, **kwargs):

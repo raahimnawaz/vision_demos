@@ -16,8 +16,9 @@ are fully interchangeable (a hardware-abstraction layer). Built to be wrapped as
 ## Status
 - **Phase 1 (done):** framework-free core loop — perception, decision, sim/HID/serial
   backends, unit + integration tests. Runs on macOS (MPS/Metal) or Linux.
-- **Phase 2 (next):** real Arduino firmware (prototyped in Wokwi) over serial.
-- **Phase 3:** wrap the same modules as ROS2 nodes (`/gesture`, `/cmd_vel`, `/detections`).
+- **Phase 2 (done):** Arduino firmware (`firmware/`, prototyped in Wokwi) + live serial
+  backend with port auto-detect, diff-drive→servo-µs protocol, and a watchdog failsafe.
+- **Phase 3 (next):** wrap the same modules as ROS2 nodes (`/gesture`, `/cmd_vel`, `/detections`).
 
 ## Run (Phase 1)
 ```bash
@@ -56,6 +57,7 @@ Keys: `q` quit · `s` screenshot · `space` reset.
 | `decision.py` | debounced gesture→Twist state machine | yes (decision_node) |
 | `actuators.py` | Actuator HAL: Sim / Serial / HID | yes (actuator_node) |
 | `run_local.py` | wires the loop (Phase 1, no ROS2) | replaced by launch file |
+| `firmware/` | Arduino sketch + Wokwi project for the serial backend | — (runs on the MCU) |
 
 ## Tests
 ```bash

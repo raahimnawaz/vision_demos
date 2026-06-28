@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "author": "raahimnawaz",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-servo", "id": "servoL", "top": -120, "left": 220,
+      "attrs": { "hornColor": "#33aaff" } },
+    { "type": "wokwi-servo", "id": "servoR", "top": 100, "left": 220,
+      "attrs": { "hornColor": "#ff7733" } }
+  ],
+  "connections": [
+    [ "uno:9",  "servoL:PWM", "green", [ "v0" ] ],
+    [ "uno:5V", "servoL:V+",  "red",   [ "v0" ] ],
+    [ "uno:GND.1", "servoL:GND", "black", [ "v0" ] ],
+
+    [ "uno:10", "servoR:PWM", "green", [ "v0" ] ],
+    [ "uno:5V", "servoR:V+",  "red",   [ "v0" ] ],
+    [ "uno:GND.2", "servoR:GND", "black", [ "v0" ] ]
+  ]
+}
