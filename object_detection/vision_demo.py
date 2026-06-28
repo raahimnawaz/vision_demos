@@ -34,8 +34,9 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODELS = os.path.join(HERE, "models")
-SHOTS = os.path.join(HERE, "shots")
+REPO_ROOT = os.path.dirname(HERE)            # object_detection/ -> repo root
+MODELS = os.path.join(REPO_ROOT, "models")   # models/ and shots/ are shared at root
+SHOTS = os.path.join(REPO_ROOT, "shots")
 
 
 # --------------------------------------------------------------------------- #
@@ -71,7 +72,7 @@ class ObjectDetector:
 
     def __init__(self, args):
         from ultralytics import YOLO
-        weights = os.path.join(HERE, "yolo11n.pt")
+        weights = os.path.join(REPO_ROOT, "yolo11n.pt")
         self.model = YOLO(weights if os.path.exists(weights) else "yolo11n.pt")
         self.names = self.model.names
         self.conf = args.conf

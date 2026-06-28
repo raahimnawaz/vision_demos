@@ -14,8 +14,9 @@ from typing import List, Optional, Tuple
 
 import cv2
 
-# reuse helpers + ObjectDetector from the sibling vision_demo.py
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# reuse helpers + ObjectDetector from the object_detection demo
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_REPO, "object_detection"))
 from vision_demo import MODELS, ObjectDetector, put_text  # noqa: E402
 
 
