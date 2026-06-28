@@ -23,7 +23,8 @@ import argparse
 
 import cv2
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_REPO, "object_detection"))
 from vision_demo import draw_hud, SHOTS  # noqa: E402
 
 from perception import GestureSource, ObjectSource          # noqa: E402
