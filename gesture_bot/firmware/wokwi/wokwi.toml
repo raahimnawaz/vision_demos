@@ -1,0 +1,11 @@
+# Wokwi VS Code extension config.
+# For the WEB simulator you don't need this file -- just create a new Arduino Uno
+# project at wokwi.com and paste in gesture_bot.ino + diagram.json.
+#
+# For the VS Code extension: compile the sketch with arduino-cli first, e.g.
+#   arduino-cli compile -b arduino:avr:uno --output-dir build gesture_bot.ino
+# then point the paths below at the build output.
+[wokwi]
+version = 1
+firmware = "build/gesture_bot.ino.hex"
+elf = "build/gesture_bot.ino.elf"
