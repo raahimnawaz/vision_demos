@@ -14,6 +14,7 @@ Three self-contained projects, increasing in ambition:
 | [`object_detection/`](object_detection/) | Realtime webcam demos — YOLO11 object detection, MediaPipe hand tracking, face mesh, and an all-in-one overlay (~30 fps). |
 | [`locateanything/`](locateanything/) | Open-vocabulary localization with NVIDIA's **LocateAnything-3B** vision-language model via MLX — describe an object in words, get boxes. |
 | [`gesture_bot/`](gesture_bot/) | **The headline project.** Webcam **gestures → decision → actuation**, with pluggable backends (2D sim, Arduino serial, computer HID) behind one `Twist`-style command. |
+| [`ros2/`](ros2/) | The same loop as a **ROS2 node graph** — `/image_raw` → `/gesture` → `/cmd_vel`, reusing the modules below unchanged. |
 
 ## gesture_bot — closing the loop
 
@@ -34,9 +35,10 @@ is a debounced state machine with three guards:
 - **Dead-man timeout** — `lost_frames` (6) frames without a hand in view falls back to `STOP`, so walking out of frame stops the robot rather than latching the last command.
 
 Output is `(linear.x, angular.z)` — deliberately the same pair that becomes
-`geometry_msgs/Twist` on `/cmd_vel`, so the decision layer ports to a ROS2 node
-unchanged. `decision.py` imports nothing but `dataclasses`, which is why it is
-fully unit-tested without a camera.
+`geometry_msgs/Twist` on `/cmd_vel`. `decision.py` imports nothing but
+`dataclasses`, which is why it is fully unit-tested without a camera — and why
+the [ROS2 graph in `ros2/`](ros2/) imports it unchanged rather than
+reimplementing it.
 
 | Gesture | Mode |
 |---|---|

@@ -1,0 +1,47 @@
+# Runtime parameters for the gesture_bot node graph.
+# Every decision_node value here mirrors a field of decision.ControllerConfig,
+# so the controller can be retuned live:
+#   ros2 param set /decision_node v_forward 0.8
+
+decision_node:
+  ros__parameters:
+    # --- motion (m/s, rad/s) ---
+    v_forward: 0.5
+    v_fast: 1.0
+    v_reverse: 0.4
+    w_rotate: 1.2
+    steer_gain: 2.0
+    # --- debounce / hysteresis ---
+    confidence_min: 0.55   # ignore gestures below this score
+    stable_frames: 4       # frames a gesture must hold before committing
+    lost_frames: 6         # frames without a hand before auto-STOP
+    # --- transport / failsafe ---
+    publish_rate: 30.0     # Hz; /cmd_vel is republished even when idle
+    gesture_timeout: 0.5   # s without /gesture -> stop (perception died)
+
+gesture_node:
+  ros__parameters:
+    num_hands: 1
+    model_path: ""         # "" -> models/gesture_recognizer.task
+    publish_empty: true    # publish hand_present=false frames so the
+                           # dead-man in decision_node can count them
+
+detector_node:
+  ros__parameters:
+    conf: 0.4
+    imgsz: 512
+    device: ""             # "" -> auto: cuda, else mps, else cpu
+    publish_annotated: false
+
+base_driver_node:
+  ros__parameters:
+    actuator: "sim"        # sim | hid | serial
+    rate: 30.0
+    cmd_vel_timeout: 0.5   # s without /cmd_vel -> stop (decision died)
+    wheel_base: 0.3
+    publish_render: true   # sim view -> ~/render (rqt_image_view / rosbag)
+    sim_world_m: 6.0
+    sim_px_per_m: 90
+    hid_live: false        # true actually sends keystrokes
+    serial_port: ""        # "" -> dry-run; e.g. "/dev/ttyACM0" to go live
+    serial_baud: 115200

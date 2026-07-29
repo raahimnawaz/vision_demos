@@ -32,3 +32,13 @@ jobs:
         # The decision layer, diff-drive kinematics, and serial framing are all
         # pure Python + numpy: no camera, no GPU, and no Arduino needed in CI.
         run: pytest gesture_bot/tests -v
+
+      - name: Run ROS2 wrapper tests (no ROS required)
+        # These check the seam between the ROS nodes and the reused modules --
+        # chiefly that decision_node's tunable-parameter list still matches
+        # ControllerConfig. Renaming a field in decision.py without updating
+        # the list would silently stop it being a ROS parameter.
+        working-directory: ros2/src/gesture_bot_ros
+        env:
+          GESTURE_BOT_SRC: ${{ github.workspace }}
+        run: pytest test -v
