@@ -16,6 +16,16 @@ models/*.task
 shots/
 testimg/out_*
 
+# colcon build artifacts (ros2/ is a workspace; only src/ is tracked)
+ros2/build/
+ros2/install/
+ros2/log/
+
+# rosbags
+*.db3
+*.mcap
+rosbag2_*/
+
 # OS / editor cruft
 .DS_Store
 .idea/

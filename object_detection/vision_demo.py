@@ -29,6 +29,7 @@ import os
 import time
 import argparse
 from collections import deque
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -67,6 +68,34 @@ def draw_hud(frame, lines):
 # --------------------------------------------------------------------------- #
 # mode: object detection (YOLO)
 # --------------------------------------------------------------------------- #
+def default_device():
+    """Best available torch device: MPS on Apple Silicon, CUDA on Linux, else CPU.
+
+    ROS2 has no supported macOS path, so the detector has to run somewhere that
+    is not MPS. Hardcoding it made this module Apple-only.
+    """
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+class Detection(NamedTuple):
+    """One YOLO box in pixel coordinates."""
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    cls: int
+    label: str
+    conf: float
+
+
 class ObjectDetector:
     name = "objects"
 
@@ -77,27 +106,43 @@ class ObjectDetector:
         self.names = self.model.names
         self.conf = args.conf
         self.imgsz = getattr(args, "imgsz", None) or 640
-        # warm up on the GPU so the first real frame isn't slow
+        self.device = getattr(args, "device", None) or default_device()
+        # warm up on the accelerator so the first real frame isn't slow
         self.model.predict(np.zeros((480, 640, 3), np.uint8),
-                           device="mps", imgsz=self.imgsz, verbose=False)
+                           device=self.device, imgsz=self.imgsz, verbose=False)
 
-    def process(self, frame):
-        res = self.model.predict(frame, device="mps", conf=self.conf,
+    def detect(self, frame):
+        """Run the model and return structured boxes -- no drawing, no side effects.
+
+        Split out from process() so the ROS2 detector_node can publish
+        vision_msgs/Detection2DArray instead of re-parsing an annotated image.
+        """
+        res = self.model.predict(frame, device=self.device, conf=self.conf,
                                  imgsz=self.imgsz, verbose=False)[0]
-        n = 0
+        out = []
         for box in res.boxes:
-            n += 1
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            color = label_color(cls)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            tag = f"{self.names[cls]} {conf:.2f}"
+            out.append(Detection(x1, y1, x2, y2, cls, self.names[cls],
+                                 float(box.conf[0])))
+        return out
+
+    def draw(self, frame, detections):
+        """Annotate a frame in place with boxes from detect()."""
+        for d in detections:
+            color = label_color(d.cls)
+            cv2.rectangle(frame, (d.x1, d.y1), (d.x2, d.y2), color, 2)
+            tag = f"{d.label} {d.conf:.2f}"
             (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(frame, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
-            cv2.putText(frame, tag, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.rectangle(frame, (d.x1, d.y1 - th - 6), (d.x1 + tw + 4, d.y1), color, -1)
+            cv2.putText(frame, tag, (d.x1 + 2, d.y1 - 4), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (0, 0, 0), 1, cv2.LINE_AA)
-        return frame, [f"objects: {n}"]
+        return frame
+
+    def process(self, frame):
+        detections = self.detect(frame)
+        frame = self.draw(frame, detections)
+        return frame, [f"objects: {len(detections)}"]
 
     def close(self):
         pass
