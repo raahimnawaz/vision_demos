@@ -20,6 +20,7 @@ Two things matter here beyond calling ``apply()``:
 import rclpy
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Twist
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
@@ -70,6 +71,13 @@ class BaseDriverNode(Node):
 
         self.actuator = make_actuator(kind, **_actuator_kwargs(self, kind))
 
+        # Monotonic clock, not the node's default system clock: both the
+        # /cmd_vel staleness check and the integration `dt` handed to the
+        # actuator are elapsed-time measurements. A system-clock step would
+        # either suppress the failsafe (backward step -> negative delta) or
+        # hand the unicycle integrator a garbage dt and teleport the sim robot.
+        self._steady = Clock(clock_type=ClockType.STEADY_TIME)
+
         self._cmd = (0.0, 0.0)
         self._last_msg = None
         self._stale_latched = False
@@ -91,7 +99,8 @@ class BaseDriverNode(Node):
         )
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Monotonic seconds. Never the system clock -- see __init__."""
+        return self._steady.now().nanoseconds * 1e-9
 
     def _on_cmd(self, msg: Twist):
         self._last_msg = self._now()

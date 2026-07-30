@@ -17,6 +17,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from gesture_bot_msgs.msg import Gesture
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
 from ._core import INTEGER_PARAMS, TUNABLE, ControllerConfig, GestureController
@@ -36,8 +37,18 @@ class DecisionNode(Node):
         self.controller = GestureController(self._config_from_params())
         self.add_on_set_parameters_callback(self._on_set_parameters)
 
+        # Staleness is an ELAPSED-time measurement, so it must come off a
+        # monotonic clock. The node's default clock is RCL_SYSTEM_TIME, which
+        # steps: NTP corrections, VM suspend/resume, and WSL2 in particular
+        # (observed jumping ~25,000 s inside a node that had been alive 5,779 s).
+        # A forward step fires this dead-man spuriously; a BACKWARD step makes
+        # `now - last_msg` negative and silently suppresses it, which is the
+        # failure that would matter on a real robot. Message header stamps stay
+        # on system time -- those are for cross-machine correlation, not duration.
+        self._steady = Clock(clock_type=ClockType.STEADY_TIME)
+
         self._cmd = (0.0, 0.0)
-        self._last_msg = None          # monotonic seconds of last /gesture
+        self._last_msg = None          # steady-clock seconds of last /gesture
         self._stale_latched = False
 
         self._pub = self.create_publisher(Twist, "cmd_vel", 10)
@@ -75,7 +86,8 @@ class DecisionNode(Node):
 
     # ----------------------------------------------------------------- loop
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Monotonic seconds. Never the system clock -- see __init__."""
+        return self._steady.now().nanoseconds * 1e-9
 
     def _on_gesture(self, msg: Gesture):
         self._last_msg = self._now()

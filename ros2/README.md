@@ -116,6 +116,45 @@ GESTURE_BOT_SRC=$(git rev-parse --show-toplevel) pytest test/ -v
 
 ## Status
 
-Written and lint-clean; the ROS-independent tests pass in CI. **The packages have
-not yet been built with `colcon` or run on a live graph** — that needs a Jazzy
-machine. Expect to fix small things on first build.
+Built and run against ROS2 Jazzy. Verified end to end:
+
+- `colcon build` succeeds; `rosidl` generates `gesture_bot_msgs/Gesture`.
+- `decision_node` advertises `/cmd_vel` as `geometry_msgs/msg/Twist`.
+- A continuous `Open_Palm` stream drives `linear.x` to **0.5** — the debounce
+  commits `FORWARD` exactly as the non-ROS loop does.
+- Killing the publisher drops `/cmd_vel` to **0.0** and it stays there. The
+  dead-man engages and does not flap.
+
+`gesture_node` and `detector_node` were not run: they need mediapipe and
+ultralytics, which a `ros-base` install does not carry.
+
+### One real bug this shook out
+
+Both nodes originally measured timeouts with `self.get_clock().now()` — the
+node's default **system** clock. Under WSL2 that clock stepped hard: a node alive
+5,779 s logged timestamps spanning 25,378 s, and staleness readings came out as
+`25196.79s` instead of milliseconds.
+
+That is a genuine defect, not just a WSL artifact. Elapsed-time measurements
+belong on a monotonic clock — a system clock steps on NTP correction and on VM
+suspend/resume too. The dangerous direction is *backward*: `now - last_msg` goes
+negative and the failsafe silently never fires. Both nodes now use
+`Clock(clock_type=ClockType.STEADY_TIME)` for durations, keeping system time only
+for message header stamps, where it belongs. After the fix, the same environment
+reports a single plausible `4.89s`.
+
+### If you run this under WSL2
+
+Two environment fixes were needed, neither of them code problems:
+
+1. **FastDDS shared memory fails** — `RTPS_TRANSPORT_SHM Error: Failed init_port
+   fastrtps_port7001`, because `/dev/shm` does not behave as it does on native
+   Linux. Publishers appear in `ros2 topic list` but no data flows. Switch RMW:
+   ```bash
+   sudo apt install ros-jazzy-rmw-cyclonedds-cpp
+   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+   ```
+2. **Delivery is bursty** — even at `-r 30`, messages arrive roughly every 5 s
+   rather than 33 ms, so the dead-man fires between bursts. This is WSL2
+   transport/timer behaviour, not the wrapper; it does not reproduce on native
+   Linux. Raise `gesture_timeout` if you want a quieter log while testing there.
