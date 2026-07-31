@@ -13,7 +13,7 @@ control logic imported unchanged by both, and a real Arduino at the end of it.
 | [`gesture_bot/`](gesture_bot/) | **The project.** Webcam **gestures → decision → actuation**, with pluggable backends (2D sim, Arduino serial, computer HID) behind one `Twist`-style command. |
 | [`ros2/`](ros2/) | The same loop as a **ROS2 node graph** — `/image_raw` → `/gesture` → `/cmd_vel`. The nodes add no control logic; they import the modules below unchanged. |
 | [`object_detection/`](object_detection/) | The **perception library** the rest of the repo is built on — `ObjectDetector` (YOLO11) plus `HandTracker` and `FaceMesh` (MediaPipe), imported by both `detector_node` and `gesture_bot/perception.py`. Also runs standalone as a webcam demo. |
-| [`locateanything/`](locateanything/) | Open-vocabulary localization with NVIDIA's **LocateAnything-3B** via MLX — describe an object in words, get boxes. Apple Silicon only, and not yet wired into the loop (Phase 5). |
+| [`locateanything/`](locateanything/) | Open-vocabulary localization — describe an object in words, get boxes. Currently NVIDIA's **LocateAnything-3B** via MLX, so Apple Silicon only and not yet wired into the loop; Phase 5 moves it to a smaller PyTorch model and wraps it as a node. |
 
 ## gesture_bot — closing the loop
 
@@ -94,13 +94,28 @@ deadband, and the gap between commanded `(v, ω)` and what the hardware actually
 did. **That discrepancy is the deliverable; the video is only evidence it
 happened.**
 
-**Phase 5 — open-vocabulary detector node.** Wrap `locateanything/` as
-`locate_node`, publishing the same `vision_msgs/Detection2DArray` on
-`/detections` that `detector_node` already does — so closed-vocabulary YOLO and
-open-vocabulary text queries become a launch-time swap with nothing downstream
-changed. The measurement that makes it more than a model demo: open-vocab is
-slower and less precise on the classes YOLO already knows, so quantify both and
-say when each is the right tool. MLX pins this phase to Apple Silicon.
+**Phase 5 — open-vocabulary detector node.** Two steps, and the first is a
+model swap rather than a port.
+
+`locateanything/` currently runs **LocateAnything-3B through MLX**, which pins
+it to Apple Silicon. Moving it to the CUDA machine is not primarily an MLX
+problem — it is a memory one: 3B parameters need roughly 6 GB in fp16 for
+weights alone, before activations, which does not fit a 6 GB card without
+quantisation work that is not what this project is about. So the model changes,
+not just the backend: **OWLv2** (~150M) or **Grounding DINO** (~170M) do the
+same job — text query in, boxes out — in PyTorch, on CUDA or CPU, with room to
+spare. That collapses the Apple-only row in the table above and puts this phase
+on the same machine as the ROS2 graph.
+
+Then wrap it as `locate_node`, publishing the same
+`vision_msgs/Detection2DArray` on `/detections` that `detector_node` already
+does — so closed-vocabulary YOLO and open-vocabulary text queries become a
+launch-time swap with nothing downstream changed.
+
+The measurement that makes it more than a model demo: open-vocab is slower and
+less precise on the classes YOLO already knows. Quantify both, and say when each
+is the right tool. The honest expectation is that YOLO wins outright on its own
+80 classes and open-vocab earns its place only outside them.
 
 **Phase 6 — latency budget.** Per-node processing time, and end-to-end latency
 from hand movement to motor response. How much does enabling `detector_node`
@@ -121,10 +136,10 @@ it is the only one that produces something a simulator cannot fake.
 
 ## What runs where
 
-Developed across an Apple Silicon Mac and a Linux/WSL box. Not every part runs
-in both places, and the two gaps pull in opposite directions:
+Developed across an Apple Silicon Mac and a Linux/WSL box with an NVIDIA GPU.
+Almost everything runs on both:
 
-| component | Apple Silicon | Linux / WSL |
+| component | Apple Silicon | Linux / WSL + CUDA |
 |---|---|---|
 | YOLO11 (`ObjectDetector`) | ✅ MPS | ✅ CUDA, or CPU |
 | MediaPipe (hands, face mesh) | ✅ | ✅ |
@@ -132,13 +147,16 @@ in both places, and the two gaps pull in opposite directions:
 | ROS2 node graph ([`ros2/`](ros2/)) | ❌ no supported macOS path | ✅ Jazzy |
 | LocateAnything-3B ([`locateanything/`](locateanything/)) | ✅ MLX | ❌ MLX is Apple-only |
 
-So the ROS2 graph is Linux-side and the open-vocabulary model is Mac-side, which
-is why Phase 5 below is scoped as a Mac task. Everything in the middle —
-the perception library, the decision layer, and all three actuator backends —
-runs in both, which is the point of keeping `decision.py` dependency-free.
+**ROS2 is the one hard split**, and it decides where the work happens: four of
+the open roadmap phases below run through the node graph, so Linux is the
+primary machine. The MLX split is the other direction and is being removed —
+see Phase 5.
 
 `default_device()` in [`object_detection/vision_demo.py`](object_detection/vision_demo.py)
 resolves MPS → CUDA → CPU at runtime, so nothing needs configuring by hand.
+Note that a Maxwell-era card (GTX 9xx, `sm_52`) needs a PyTorch build whose
+`torch.cuda.get_arch_list()` includes `sm_50` — binary compatibility covers
+`sm_52` from there, but newer builds have been dropping the architecture.
 
 ## Setup
 
