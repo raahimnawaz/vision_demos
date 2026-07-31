@@ -31,6 +31,29 @@ coordinates, already un-letterboxed to the original frame.
 `--conf` defaults to `0.1`. OWLv2 scores run considerably lower than YOLO's, so
 do not read `0.15` here as low confidence the way you would for a YOLO box.
 
+### Scores are transformers-version-sensitive — pin it if you care
+
+The same checkpoint, image and queries produce materially different scores
+across major versions. Measured on `testimg/bus.jpg`, queries
+`bus, person, traffic light`:
+
+| detection | transformers 4.48 | transformers 5.14 |
+|---|---:|---:|
+| bus | 0.681 | 0.638 |
+| person ×3 | 0.247 / 0.195 / 0.178 | 0.142 / 0.131 / 0.109 |
+
+Boxes shift too. The consequence that actually bites: at `conf=0.15` this image
+yields **six** detections on 4.48 and **two** on 5.14 — the people fall below the
+threshold rather than disappearing. So `conf` is calibrated against a version,
+not against the model, and moving between them silently changes what you detect.
+
+The code itself works on both — transformers renamed
+`post_process_object_detection` to `post_process_grounded_object_detection` in
+5.x, and `OpenVocabDetector` resolves whichever exists at construction. That
+handles the API break. It does not, and cannot, handle the score drift.
+
+Pin `transformers` in any environment whose numbers you intend to compare.
+
 ## Speed — measured, not assumed
 
 GTX 980 Ti (`sm_52`), batch 1, three queries:

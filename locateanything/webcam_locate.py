@@ -136,7 +136,40 @@ class OpenVocabDetector:
         self.device = device or default_device()
 
         self.processor = Owlv2Processor.from_pretrained(model_id)
+
+        # transformers renamed this between 4.x and 5.x:
+        #   4.x  post_process_object_detection(outputs, threshold, target_sizes)
+        #   5.x  post_process_grounded_object_detection(same three, + text_labels)
+        # Both are present on their respective versions and neither is present on
+        # the other, so resolve once here rather than per frame. This is not
+        # hypothetical tidiness: this repo is developed across machines that
+        # currently run 4.48 and 5.14.
+        self._post_process = getattr(
+            self.processor, "post_process_grounded_object_detection", None
+        ) or getattr(self.processor, "post_process_object_detection", None)
+        if self._post_process is None:
+            raise RuntimeError(
+                "Owlv2Processor exposes neither post_process_grounded_object_detection "
+                "nor post_process_object_detection; transformers version "
+                "is not supported"
+            )
+
         self.model = Owlv2ForObjectDetection.from_pretrained(model_id)
+
+        # transformers renamed this between 4.x and 5.x -- 4.48 has
+        # post_process_object_detection, 5.14 has only
+        # post_process_grounded_object_detection. Both take the same
+        # (outputs, threshold, target_sizes) and return the same
+        # scores/labels/boxes, so bind whichever exists rather than pinning a
+        # transformers version. Resolved once here, not per frame.
+        self._post_process = getattr(
+            self.processor, "post_process_grounded_object_detection", None
+        ) or getattr(self.processor, "post_process_object_detection", None)
+        if self._post_process is None:
+            raise RuntimeError(
+                "Owlv2Processor exposes neither post_process_grounded_object_detection "
+                "nor post_process_object_detection; unsupported transformers version"
+            )
         # fp16 on CUDA roughly halves both weights and activations; MPS and CPU
         # stay fp32, where half precision is either unsupported or slower.
         self.dtype = torch.float16 if self.device == "cuda" else torch.float32
@@ -171,7 +204,7 @@ class OpenVocabDetector:
         # target_sizes is (height, width) of the ORIGINAL frame; OWLv2 letterboxes
         # internally to a square, and post-processing undoes that for us.
         h, w = frame.shape[:2]
-        results = self.processor.post_process_object_detection(
+        results = self._post_process(
             outputs=outputs,
             threshold=self.conf,
             target_sizes=torch.tensor([[h, w]], device=self.device),
