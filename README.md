@@ -13,7 +13,7 @@ control logic imported unchanged by both, and a real Arduino at the end of it.
 | [`gesture_bot/`](gesture_bot/) | **The project.** Webcam **gestures → decision → actuation**, with pluggable backends (2D sim, Arduino serial, computer HID) behind one `Twist`-style command. |
 | [`ros2/`](ros2/) | The same loop as a **ROS2 node graph** — `/image_raw` → `/gesture` → `/cmd_vel`. The nodes add no control logic; they import the modules below unchanged. |
 | [`object_detection/`](object_detection/) | The **perception library** the rest of the repo is built on — `ObjectDetector` (YOLO11) plus `HandTracker` and `FaceMesh` (MediaPipe), imported by both `detector_node` and `gesture_bot/perception.py`. Also runs standalone as a webcam demo. |
-| [`locateanything/`](locateanything/) | Open-vocabulary localization — describe an object in words, get boxes. Currently NVIDIA's **LocateAnything-3B** via MLX, so Apple Silicon only and not yet wired into the loop; Phase 5 moves it to a smaller PyTorch model and wraps it as a node. |
+| [`locateanything/`](locateanything/) | Open-vocabulary localization — describe an object in words, get boxes, no fixed class list. **OWLv2** in PyTorch on CUDA/MPS/CPU, exposing the same `Detection` interface as the YOLO detector. Not yet wired into the ROS2 graph (Phase 5). |
 
 ## gesture_bot — closing the loop
 
@@ -80,7 +80,7 @@ without physical hardware.
 | 2 | Arduino serial actuation — firmware, byte framing, Wokwi | ✅ done |
 | 3 | ROS2 node graph — `/image_raw` → `/gesture` → `/cmd_vel` | ✅ done |
 | 4 | Drive real hardware, recorded | ⬜ |
-| 5 | Open-vocabulary detector node | ⬜ |
+| 5 | Open-vocabulary detector node | 🚧 model swapped; node pending |
 | 6 | Latency budget, gesture → motion | ⬜ |
 | 7 | rosbag regression test in CI | ⬜ |
 
@@ -94,28 +94,41 @@ deadband, and the gap between commanded `(v, ω)` and what the hardware actually
 did. **That discrepancy is the deliverable; the video is only evidence it
 happened.**
 
-**Phase 5 — open-vocabulary detector node.** Two steps, and the first is a
-model swap rather than a port.
+**Phase 5 — open-vocabulary detector node.** Half done.
 
-`locateanything/` currently runs **LocateAnything-3B through MLX**, which pins
-it to Apple Silicon. Moving it to the CUDA machine is not primarily an MLX
-problem — it is a memory one: 3B parameters need roughly 6 GB in fp16 for
-weights alone, before activations, which does not fit a 6 GB card without
-quantisation work that is not what this project is about. So the model changes,
-not just the backend: **OWLv2** (~150M) or **Grounding DINO** (~170M) do the
-same job — text query in, boxes out — in PyTorch, on CUDA or CPU, with room to
-spare. That collapses the Apple-only row in the table above and puts this phase
-on the same machine as the ROS2 graph.
+**Done — the model swap.** `locateanything/` ran **LocateAnything-3B through
+MLX**, which pinned it to Apple Silicon. The blocker was never MLX but memory:
+3B parameters need ~6 GB in fp16 for weights alone, before activations, against
+a 6 GB card — the old code carried an OOM retry ladder down to 320 px to cope,
+even on 16 GB of unified memory. It now runs **OWLv2** (~150M) in PyTorch on
+CUDA/MPS/CPU, in 1.6 GB, exposing the same `Detection` fields and
+`detect`/`draw`/`process` methods as `ObjectDetector`.
 
-Then wrap it as `locate_node`, publishing the same
+That swap already produced the comparison this phase existed to make, and it is
+starker than expected:
+
+| | latency | fps | vocabulary |
+|---|---:|---:|---|
+| YOLO11n | ~33 ms \* | ~30 \* | 80 fixed classes |
+| OWLv2 (fp16) | **490 ms** | **2.0** | anything you can name |
+
+\* The OWLv2 row is measured on a GTX 980 Ti (`sm_52`), batch 1, three queries.
+The YOLO row is this repo's existing ~30 fps claim for the webcam demo, *not* a
+back-to-back measurement on the same machine — worth re-running both together
+when the node below lands.
+
+**Roughly an order of magnitude more latency to stop being limited to a fixed
+vocabulary.** And it does
+not improve by lowering camera resolution — OWLv2 resizes every input to
+960×960 internally, so the patch count is constant. fp16 beats fp32 by 1.35× on
+this card despite Maxwell having no fast half path, because at batch 1 it is
+bandwidth-bound.
+
+**Not done — the node.** Wrap it as `locate_node` publishing the same
 `vision_msgs/Detection2DArray` on `/detections` that `detector_node` already
-does — so closed-vocabulary YOLO and open-vocabulary text queries become a
-launch-time swap with nothing downstream changed.
-
-The measurement that makes it more than a model demo: open-vocab is slower and
-less precise on the classes YOLO already knows. Quantify both, and say when each
-is the right tool. The honest expectation is that YOLO wins outright on its own
-80 classes and open-vocab earns its place only outside them.
+does, so the two detectors become a launch-time swap with nothing downstream
+changed. The 2 fps figure decides its shape: `locate_node` belongs on an
+auxiliary topic, **not** in the gesture control path, which runs per frame.
 
 **Phase 6 — latency budget.** Per-node processing time, and end-to-end latency
 from hand movement to motor response. How much does enabling `detector_node`
@@ -145,12 +158,15 @@ Almost everything runs on both:
 | MediaPipe (hands, face mesh) | ✅ | ✅ |
 | `gesture_bot` — sim / HID / Arduino serial | ✅ | ✅ |
 | ROS2 node graph ([`ros2/`](ros2/)) | ❌ no supported macOS path | ✅ Jazzy |
-| LocateAnything-3B ([`locateanything/`](locateanything/)) | ✅ MLX | ❌ MLX is Apple-only |
+| OWLv2 open-vocab ([`locateanything/`](locateanything/)) | ✅ MPS | ✅ CUDA, or CPU |
 
-**ROS2 is the one hard split**, and it decides where the work happens: four of
-the open roadmap phases below run through the node graph, so Linux is the
-primary machine. The MLX split is the other direction and is being removed —
-see Phase 5.
+**ROS2 is now the only hard split**, and it decides where the work happens: four
+of the open roadmap phases below run through the node graph, so Linux is the
+primary machine. `locateanything/` used to be the opposite split — it ran
+LocateAnything-3B through MLX and was Apple-only — until it moved to OWLv2 in
+PyTorch. That was a memory decision more than a portability one: 3B parameters
+need ~6 GB in fp16 for weights alone against a 6 GB card, while OWLv2 runs in
+1.6 GB. See [`locateanything/`](locateanything/) for the measured numbers.
 
 `default_device()` in [`object_detection/vision_demo.py`](object_detection/vision_demo.py)
 resolves MPS → CUDA → CPU at runtime, so nothing needs configuring by hand.
