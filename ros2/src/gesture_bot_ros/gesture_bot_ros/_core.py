@@ -76,11 +76,60 @@ TUNABLE = (
 # Counts, not physical quantities: declared as ROS integer parameters.
 INTEGER_PARAMS = ("stable_frames", "lost_frames")
 
+# Node parameters that are not ControllerConfig fields but still need bounds.
+POSITIVE_PARAMS = ("publish_rate", "gesture_timeout")
+
+
+def reject_parameter(name, value):
+    """Why setting ``name`` to ``value`` would be unsafe, or None if it is fine.
+
+    Lives here rather than on the node for the same reason ``TUNABLE`` does: it
+    can be tested without rclpy. See ``test/test_core.py``.
+    """
+    try:
+        if name in INTEGER_PARAMS:
+            if int(value) < 1:
+                return f"{name} must be >= 1"
+        elif name == "confidence_min":
+            if not 0.0 <= float(value) <= 1.0:
+                return "confidence_min must be in [0, 1]"
+        elif name in POSITIVE_PARAMS:
+            if float(value) <= 0.0:
+                return f"{name} must be > 0"
+        elif name == "steer_gain":
+            # Negative gain inverts steering. That is exactly the bug the
+            # display-coordinate contract exists to prevent, so do not let a
+            # live `ros2 param set` reintroduce it by hand.
+            if float(value) < 0.0:
+                return "steer_gain must be >= 0 (negative inverts steering)"
+    except (TypeError, ValueError):
+        return f"{name} got a value of the wrong type: {value!r}"
+    return None
+
+
+def reject_batch(items):
+    """First rejection reason across an iterable of ``(name, value)``, else None.
+
+    rclpy applies *nothing* when a set-parameters callback returns unsuccessful,
+    so the whole batch has to be validated before any of it is applied. Applying
+    as you iterate leaves the node holding values the parameter store rejected,
+    and ``ros2 param get`` then disagrees with how the robot is behaving.
+    """
+    for name, value in items:
+        reason = reject_parameter(name, value)
+        if reason is not None:
+            return reason
+    return None
+
+
 __all__ = [
     "GESTURE_MODES",
     "INTEGER_PARAMS",
+    "POSITIVE_PARAMS",
     "TUNABLE",
     "ControllerConfig",
     "GestureController",
     "ensure_on_path",
+    "reject_batch",
+    "reject_parameter",
 ]

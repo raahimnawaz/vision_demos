@@ -96,3 +96,55 @@ def test_unrecognized_labels_do_not_commit(label):
     for _ in range(10):
         ctrl.update(label, 0.99, True, 0.5)
     assert ctrl.mode == "STOP"
+
+
+# ------------------------------------------------------------------ parameters
+@pytest.mark.parametrize("name,value", [
+    ("stable_frames", 1),
+    ("lost_frames", 6),
+    ("confidence_min", 0.0),
+    ("confidence_min", 1.0),
+    ("publish_rate", 30.0),
+    ("gesture_timeout", 0.5),
+    ("steer_gain", 0.0),
+    ("v_forward", -1.0),          # reversing the default gear is legitimate
+])
+def test_acceptable_parameters_are_accepted(name, value):
+    assert _core.reject_parameter(name, value) is None
+
+
+@pytest.mark.parametrize("name,value", [
+    ("stable_frames", 0),         # 0 would commit on any single frame
+    ("lost_frames", -1),          # and disable the dead-man entirely
+    ("confidence_min", 1.5),
+    ("confidence_min", -0.1),
+    ("publish_rate", 0.0),        # 1/rate -> ZeroDivisionError on the timer
+    ("gesture_timeout", 0.0),     # every frame instantly stale
+    ("steer_gain", -1.0),         # silently inverts steering
+])
+def test_unsafe_parameters_are_rejected(name, value):
+    assert _core.reject_parameter(name, value), f"{name}={value} should be rejected"
+
+
+def test_unknown_parameters_are_left_alone():
+    """Validation must not reject names it has no opinion about."""
+    assert _core.reject_parameter("some_future_param", "anything") is None
+
+
+def test_batch_rejects_if_any_member_is_bad():
+    """The desync guard: one bad value must sink the whole batch.
+
+    rclpy applies nothing when the callback rejects, so decision_node validates
+    everything up front. If this returned None for a batch containing a bad
+    value, the node would apply the good ones and diverge from `ros2 param get`.
+    """
+    good = ("v_forward", 0.8)
+    bad = ("stable_frames", 0)
+    assert _core.reject_batch([good]) is None
+    assert _core.reject_batch([good, bad]), "a later bad value must still reject"
+    assert _core.reject_batch([bad, good]), "an earlier bad value must reject"
+
+
+def test_batch_reports_the_first_reason():
+    reason = _core.reject_batch([("stable_frames", 0), ("confidence_min", 9.0)])
+    assert "stable_frames" in reason

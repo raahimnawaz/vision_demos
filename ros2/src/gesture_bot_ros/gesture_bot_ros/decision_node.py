@@ -5,6 +5,11 @@ adds exactly three things the plain Python loop did not need:
 
 * **ROS parameters.** Every ``ControllerConfig`` field is a live-tunable
   parameter, so the robot can be retuned with ``ros2 param set`` while it drives.
+  ``publish_rate`` is live too, which costs a timer rebuild -- ``create_timer``
+  captures its period at construction, so without that the parameter would
+  accept a new value and quietly keep the old rate. A batch is validated in full
+  before any of it is applied, because rclpy applies nothing when the callback
+  rejects, and a partial apply would desync the node from the parameter store.
 * **Fixed-rate publishing.** ``/cmd_vel`` is republished on a timer even when no
   new gesture arrives, so downstream consumers can implement their own timeout.
 * **A dead-man on the input topic.** ``lost_frames`` only counts frames that
@@ -20,7 +25,13 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 
-from ._core import INTEGER_PARAMS, TUNABLE, ControllerConfig, GestureController
+from ._core import (
+    INTEGER_PARAMS,
+    TUNABLE,
+    ControllerConfig,
+    GestureController,
+    reject_batch,
+)
 
 
 class DecisionNode(Node):
@@ -35,7 +46,6 @@ class DecisionNode(Node):
         self.declare_parameter("gesture_timeout", 0.5)    # s before input is stale
 
         self.controller = GestureController(self._config_from_params())
-        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         # Staleness is an ELAPSED-time measurement, so it must come off a
         # monotonic clock. The node's default clock is RCL_SYSTEM_TIME, which
@@ -54,8 +64,13 @@ class DecisionNode(Node):
         self._pub = self.create_publisher(Twist, "cmd_vel", 10)
         self._sub = self.create_subscription(Gesture, "gesture", self._on_gesture, 10)
 
+        self._timer = None
         rate = float(self.get_parameter("publish_rate").value)
-        self._timer = self.create_timer(1.0 / rate, self._on_timer)
+        self._set_publish_rate(rate)
+
+        # Registered last: this callback rebuilds the timer and mutates the
+        # controller, so both have to exist before it can first fire.
+        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         self.get_logger().info(
             f"decision_node up: publishing /cmd_vel at {rate:.0f} Hz, "
@@ -69,19 +84,39 @@ class DecisionNode(Node):
             values[name] = int(values[name])
         return ControllerConfig(**values)
 
+    def _set_publish_rate(self, rate: float) -> None:
+        """(Re)build the /cmd_vel timer.
+
+        ``create_timer`` captures its period at construction, so setting the
+        ``publish_rate`` parameter alone changes nothing -- it has to be torn
+        down and rebuilt, or the parameter is live in name only.
+        """
+        if self._timer is not None:
+            self.destroy_timer(self._timer)
+        self._timer = self.create_timer(1.0 / rate, self._on_timer)
+
     def _on_set_parameters(self, params):
-        """Apply live retuning. Rejects values that would make the loop unsafe."""
+        """Apply live retuning. Rejects values that would make the loop unsafe.
+
+        The whole batch is validated before any of it is applied. rclpy applies
+        nothing when this returns unsuccessful, so mutating as we iterate would
+        leave the controller holding values the parameter store rejected --
+        ``ros2 param get`` would then disagree with how the robot is behaving.
+        """
+        reason = reject_batch((p.name, p.value) for p in params)
+        if reason is not None:
+            self.get_logger().warn(f"rejected parameter update: {reason}")
+            return SetParametersResult(successful=False, reason=reason)
+
         for p in params:
-            if p.name in INTEGER_PARAMS and int(p.value) < 1:
-                return SetParametersResult(
-                    successful=False, reason=f"{p.name} must be >= 1"
-                )
-            if p.name == "confidence_min" and not 0.0 <= float(p.value) <= 1.0:
-                return SetParametersResult(
-                    successful=False, reason="confidence_min must be in [0, 1]"
-                )
             if p.name in TUNABLE:
-                setattr(self.controller.cfg, p.name, p.value)
+                value = int(p.value) if p.name in INTEGER_PARAMS else p.value
+                setattr(self.controller.cfg, p.name, value)
+            elif p.name == "publish_rate":
+                self._set_publish_rate(float(p.value))
+                self.get_logger().info(
+                    f"/cmd_vel publish rate now {float(p.value):.0f} Hz"
+                )
         return SetParametersResult(successful=True)
 
     # ----------------------------------------------------------------- loop
