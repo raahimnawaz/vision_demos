@@ -43,10 +43,14 @@ def main():
                     help="actually send keystrokes in hid mode")
     ap.add_argument("--serial-port", default=None,
                     help="open a real serial port in serial mode")
+    ap.add_argument("--no-mirror", action="store_true",
+                    help="feed raw camera coordinates instead of mirrored "
+                         "display coordinates (inverts steering; matches "
+                         "gesture_node's mirror:=false)")
     args = ap.parse_args()
 
     print(f"Loading gesture-control loop (actuator={args.actuator})...")
-    gestures = GestureSource(num_hands=1)
+    gestures = GestureSource(num_hands=1, mirror=not args.no_mirror)
     objects = ObjectSource() if args.objects else None
     controller = GestureController()
     if args.actuator == "hid":
@@ -83,7 +87,10 @@ def main():
         if not ret:
             print("Failed to read frame.")
             break
-        frame = cv2.flip(frame, 1)  # mirror
+        # Mirror into display coordinates. Owned by GestureSource rather than
+        # done inline here, so this entry point and the ROS2 gesture_node cannot
+        # drift apart -- see perception.to_display_frame().
+        frame = gestures.prepare(frame)
 
         if objects:
             frame, _ = objects.process_and_draw(frame)

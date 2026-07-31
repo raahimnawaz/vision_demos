@@ -25,6 +25,10 @@ gesture_node:
     model_path: ""         # "" -> models/gesture_recognizer.task
     publish_empty: true    # publish hand_present=false frames so the
                            # dead-man in decision_node can count them
+    mirror: true           # /image_raw is raw camera coords; hand_x is defined
+                           # in display coords. false only if the camera is
+                           # already mirrored upstream -- getting this wrong
+                           # inverts steering, it does not just offset it.
 
 detector_node:
   ros__parameters:

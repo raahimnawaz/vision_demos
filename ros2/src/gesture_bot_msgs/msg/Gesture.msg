@@ -17,8 +17,14 @@ float32 score
 # these as a dead-man and stops the robot.
 bool hand_present
 
-# Hand centroid, normalized to [0, 1] in display coordinates.
+# Hand centroid, normalized to [0, 1] in DISPLAY coordinates -- the frame as the
+# user sees it, i.e. horizontally mirrored relative to a raw webcam feed.
 # x = 0 is image-left, y = 0 is image-top.
+#
+# Publishers must mirror before measuring (perception.to_display_frame, applied
+# by GestureSource.prepare). Publishing raw camera coordinates here inverts the
+# sign of decision.py's steering term rather than merely offsetting it, so the
+# robot trims the wrong way while every unit test still passes.
 float32 hand_x
 float32 hand_y
 

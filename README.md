@@ -53,6 +53,23 @@ Hand position left/right of center adds a proportional steering term on top of
 the committed mode, so the arm's horizontal offset trims the heading while the
 gesture sets the gear.
 
+### The coordinate contract
+
+`hand_x` is defined in **display** coordinates — the frame as you see it,
+mirrored like a selfie camera — and the steering term is `steer_gain *
+(0.5 - hand_x)`. Feeding the controller a raw, un-mirrored camera frame
+therefore does not offset the steering, it **inverts** it.
+
+That is not hypothetical: `run_local.py` mirrored inline before perception and
+the ROS2 `gesture_node` did not, so for a while the node graph steered backwards
+while importing the identical controller. Sharing the module was never enough —
+the convention at the boundary has to be shared too. The mirror now belongs to
+[`perception.to_display_frame()`](gesture_bot/perception.py), applied by
+`GestureSource.prepare()`, which both entry points call; `Gesture.msg` documents
+the same contract for anything that publishes the message. The sign relationship
+is pinned in [`tests/test_framing.py`](gesture_bot/tests/test_framing.py), which
+runs without a camera or rclpy.
+
 ### Actuator backends
 
 All three implement the same interface, so the perception and decision layers

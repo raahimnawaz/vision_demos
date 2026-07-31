@@ -27,13 +27,39 @@ KNOWN_GESTURES = (
 )
 
 
+def to_display_frame(frame_bgr, mirror: bool = True):
+    """Raw camera frame -> display coordinates. Call before process().
+
+    THE COORDINATE CONTRACT. `GestureObservation` -- and `gesture_bot_msgs/Gesture`,
+    which mirrors it -- are defined in *display* coordinates: the frame as the
+    user sees it, which for a webcam means horizontally mirrored, like a selfie
+    camera. Raw camera coordinates are the other handedness.
+
+    It matters because decision.py steers on
+
+        w = steer_gain * (0.5 - hand_x)
+
+    so handing the pipeline a raw, un-mirrored frame does not merely offset
+    `hand_x` -- it inverts the sign of the steering term. `handedness` flips too:
+    a raw frame reports your right hand as "Left".
+
+    This lives here, next to the class that defines the coordinate system,
+    because it was previously the caller's job and the callers disagreed:
+    run_local.py mirrored before process(), the ROS2 gesture_node did not, and
+    the ROS2 graph therefore steered the wrong way while importing byte-for-byte
+    the same controller. Shared code is not shared behaviour unless the
+    convention at the boundary is shared too.
+    """
+    return cv2.flip(frame_bgr, 1) if mirror else frame_bgr
+
+
 @dataclass
 class GestureObservation:
     """One frame of hand perception, in normalized + pixel coords."""
     gesture: Optional[str] = None        # e.g. "Open_Palm", or None if no hand
     score: float = 0.0                   # gesture confidence 0..1
     hand_present: bool = False
-    hand_x: float = 0.5                  # hand centroid, normalized [0,1] (display coords)
+    hand_x: float = 0.5                  # hand centroid, normalized [0,1] -- see to_display_frame()
     hand_y: float = 0.5
     handedness: Optional[str] = None     # "Left" / "Right"
     landmarks_px: List[Tuple[int, int]] = field(default_factory=list)
@@ -42,7 +68,9 @@ class GestureObservation:
 class GestureSource:
     """Realtime hand-gesture perception in MediaPipe VIDEO mode."""
 
-    def __init__(self, num_hands: int = 1, model_path: Optional[str] = None):
+    def __init__(self, num_hands: int = 1, model_path: Optional[str] = None,
+                 mirror: bool = True):
+        self.mirror = mirror
         import mediapipe as mp
         from mediapipe.tasks.python import vision, BaseOptions
         self.mp = mp
@@ -65,7 +93,17 @@ class GestureSource:
     def _ts_ms(self) -> int:
         return int((time.monotonic() - self._start) * 1000)
 
+    def prepare(self, frame_bgr):
+        """Raw camera frame -> the display frame process() and draw() expect.
+
+        Every entry point calls this once per frame, before process(). The frame
+        it returns is also the one that must be shown or published, so that
+        landmarks_px line up with what the user is looking at.
+        """
+        return to_display_frame(frame_bgr, self.mirror)
+
     def process(self, frame_bgr) -> GestureObservation:
+        """Observe one frame. Expects a frame already through prepare()."""
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_img = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
