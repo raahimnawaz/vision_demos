@@ -1,7 +1,12 @@
 # object_detection
 
-Realtime webcam computer-vision demos, GPU-accelerated on Apple Silicon (MPS /
-Metal) and CUDA on Linux. One script, four modes:
+The **perception library** the rest of the repo is built on: `ObjectDetector`
+(YOLO11) plus `HandTracker` and `FaceMesh` (MediaPipe), imported by both
+`gesture_bot/perception.py` and the ROS2 `detector_node`. It also runs
+standalone as a webcam demo — one script, four modes.
+
+`default_device()` resolves **MPS → CUDA → CPU** at runtime, so it runs on a
+Linux/NVIDIA box or an Apple Silicon Mac with nothing to configure.
 
 | mode | what it does | model |
 |---|---|---|

@@ -1,9 +1,11 @@
 """
-Realtime webcam vision demos on Apple Silicon (M5, MPS / Metal accelerated).
+Realtime webcam vision demos. Device is resolved at runtime by default_device()
+-- MPS on Apple Silicon, else CUDA, else CPU -- so this runs unchanged on a Mac
+or on a Linux/NVIDIA box.
 
 Modes:
     objects   YOLO11 object detection -- bounding boxes + labels, 80 COCO classes
-              (person, cat, cup, laptop, ...). Runs on the Apple GPU via MPS.
+              (person, cat, cup, laptop, ...).
     hands     MediaPipe hand landmarks -- 21 points per hand (up to 2 hands),
               connected into a hand skeleton, with left/right labels.
     face      MediaPipe face mesh -- 468 landmark points + contours/tesselation.

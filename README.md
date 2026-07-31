@@ -194,13 +194,21 @@ Note that a Maxwell-era card (GTX 9xx, `sm_52`) needs a PyTorch build whose
 ## Setup
 
 ```bash
+git clone https://github.com/raahimnawaz/vision_demos.git ~/vision_demos
+cd ~/vision_demos
+
 python3.12 -m venv ~/vision_demos_env        # MediaPipe/Torch need Python 3.11-3.13
 source ~/vision_demos_env/bin/activate
 pip install opencv-python mediapipe ultralytics pyserial pyautogui
 ./download_models.sh                          # fetch MediaPipe .task bundles
 ```
 
-(`locateanything/` uses a **separate** MLX venv — see its README.)
+`~/vision_demos` is not arbitrary: it is the fallback path the ROS2 nodes use to
+locate these modules at runtime, since they live in the repo rather than in the
+ament package. `GESTURE_BOT_SRC` overrides it — see [`ros2/`](ros2/).
+
+`locateanything/` shares this environment and adds `transformers` on top; see
+[its README](locateanything/).
 
 ## Run
 
@@ -228,13 +236,13 @@ point of keeping `decision.py` dependency-free.
 ```
 object_detection/   perception library — ObjectDetector / HandTracker / FaceMesh
                     (imported by gesture_bot and by ros2/detector_node)
-locateanything/     NVIDIA LocateAnything-3B (MLX) — open-vocabulary localization
+locateanything/     OWLv2 (PyTorch, CUDA/MPS/CPU) — open-vocabulary localization
 gesture_bot/        gesture → decision → actuation (sim / Arduino / HID)
-  ├─ perception.py    MediaPipe gesture recognition
+  ├─ perception.py    MediaPipe gesture recognition + the coordinate contract
   ├─ decision.py      debounced state machine → (v, ω)   [dependency-free]
   ├─ actuators.py     sim / serial / HID backends
   ├─ firmware/        Arduino sketch + Wokwi project for the serial backend
-  └─ tests/           decision, kinematics, and serial-framing tests
+  └─ tests/           decision, kinematics, serial framing, coordinate contract
 models/             MediaPipe .task bundles (gitignored; via download_models.sh)
 testimg/            small test fixtures
 ```
