@@ -26,6 +26,7 @@ setup(
         "console_scripts": [
             "gesture_node = gesture_bot_ros.gesture_node:main",
             "detector_node = gesture_bot_ros.detector_node:main",
+            "locate_node = gesture_bot_ros.locate_node:main",
             "decision_node = gesture_bot_ros.decision_node:main",
             "base_driver_node = gesture_bot_ros.base_driver_node:main",
         ],

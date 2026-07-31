@@ -9,6 +9,10 @@
     # replay a recorded session instead of opening the camera
     ros2 launch gesture_bot_ros gesture_bot.launch.py camera:=false
     ros2 bag play my_session.bag
+
+    # open-vocabulary detection instead of YOLO's 80 fixed classes
+    ros2 launch gesture_bot_ros gesture_bot.launch.py \
+        locate:=true queries:="a red mug, keys, remote control"
 """
 
 import os
@@ -17,8 +21,9 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = "gesture_bot_ros"
 
@@ -36,6 +41,17 @@ def generate_launch_description():
                               description="Launch v4l2_camera. false to replay a bag."),
         DeclareLaunchArgument("detector", default_value="false",
                               description="Also run YOLO object detection."),
+        DeclareLaunchArgument(
+            "locate", default_value="false",
+            description="Run open-vocabulary detection (OWLv2) instead of YOLO. "
+                        "Publishes the same Detection2DArray on the same topic, so "
+                        "do NOT enable this together with detector:=true -- they "
+                        "would both write /detections.",
+        ),
+        DeclareLaunchArgument(
+            "queries", default_value="person, cup, laptop",
+            description="Comma-separated open-vocabulary queries for locate:=true.",
+        ),
         DeclareLaunchArgument("video_device", default_value="/dev/video0"),
         DeclareLaunchArgument("actuator", default_value="sim",
                               description="sim | hid | serial"),
@@ -69,6 +85,26 @@ def generate_launch_description():
         parameters=[params], additional_env=env, output="screen",
     )
 
+    # queries arrives as one comma-separated string because launch arguments are
+    # strings; the node wants a list, so split it here rather than teaching the
+    # node a second input format.
+    locate = Node(
+        package=PKG, executable="locate_node", name="locate_node",
+        condition=IfCondition(LaunchConfiguration("locate")),
+        parameters=[
+            params,
+            {"queries": ParameterValue(
+                PythonExpression(
+                    ["[s.strip() for s in '",
+                     LaunchConfiguration("queries"),
+                     "'.split(',') if s.strip()]"]
+                ),
+                value_type=None,
+            )},
+        ],
+        additional_env=env, output="screen",
+    )
+
     decision = Node(
         package=PKG, executable="decision_node", name="decision_node",
         parameters=[params], additional_env=env, output="screen",
@@ -86,4 +122,4 @@ def generate_launch_description():
         additional_env=env, output="screen",
     )
 
-    return LaunchDescription([*args, camera, gesture, detector, decision, base])
+    return LaunchDescription([*args, camera, gesture, detector, locate, decision, base])

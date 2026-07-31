@@ -33,6 +33,16 @@ detector_node:
     device: ""             # "" -> auto: cuda, else mps, else cpu
     publish_annotated: false
 
+# Open-vocabulary alternative to detector_node -- same Detection2DArray on the
+# same /detections topic, so run one or the other, never both.
+locate_node:
+  ros__parameters:
+    queries: ["person", "cup", "laptop"]   # settable live: ros2 param set
+    conf: 0.1              # OWLv2 scores run lower than YOLO's; 0.1 is a floor,
+                           # not the "low confidence" it would mean for YOLO
+    device: ""             # "" -> auto: cuda, else mps, else cpu
+    publish_annotated: false
+
 base_driver_node:
   ros__parameters:
     actuator: "sim"        # sim | hid | serial

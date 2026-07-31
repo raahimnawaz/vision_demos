@@ -10,7 +10,9 @@ place. The wrappers handle transport, parameters, and failsafes only.
 v4l2_camera ──/image_raw──┬──► gesture_node  ──/gesture────► decision_node ──/cmd_vel──► base_driver_node
        (sensor_msgs/Image)│      (MediaPipe)   (Gesture)      (GestureController)  (Twist)   │ sim | Arduino | HID
                           └──► detector_node ──/detections──►  (optional consumers)          └──► ~/render
-                                  (YOLO11)   (vision_msgs/Detection2DArray)              (sensor_msgs/Image)
+                          │       (YOLO11)   (vision_msgs/Detection2DArray)              (sensor_msgs/Image)
+                          └──► locate_node   ──/detections──►  (same topic, same type;
+                                  (OWLv2)                       run one or the other)
 ```
 
 ## Interfaces
@@ -19,7 +21,7 @@ v4l2_camera ──/image_raw──┬──► gesture_node  ──/gesture─�
 |---|---|---|
 | `/image_raw` | `sensor_msgs/Image` | `v4l2_camera` (external) |
 | `/gesture` | `gesture_bot_msgs/Gesture` | `gesture_node` |
-| `/detections` | `vision_msgs/Detection2DArray` | `detector_node` |
+| `/detections` | `vision_msgs/Detection2DArray` | `detector_node` *or* `locate_node` |
 | `/cmd_vel` | `geometry_msgs/Twist` | `decision_node` |
 | `/base_driver_node/render` | `sensor_msgs/Image` | `base_driver_node` |
 
@@ -27,6 +29,33 @@ Only **one** custom message exists — `Gesture`, because ROS has no standard ty
 for canned hand gestures. Detections use `vision_msgs` and motion uses
 `geometry_msgs/Twist`, both standard, so anything else in the ecosystem can
 consume this graph.
+
+### Two detectors, one interface
+
+`detector_node` (YOLO11, 80 fixed classes) and `locate_node` (OWLv2,
+open-vocabulary) publish the **same message on the same topic**, so swapping
+them changes nothing downstream:
+
+```bash
+ros2 launch gesture_bot_ros gesture_bot.launch.py detector:=true
+ros2 launch gesture_bot_ros gesture_bot.launch.py locate:=true \
+    queries:="a red mug, keys, remote control"
+ros2 param set /locate_node queries "['scissors','notebook']"   # live, no restart
+```
+
+That is only possible because `OpenVocabDetector` was written to mirror
+`ObjectDetector` field-for-field — same `Detection`, same
+`detect`/`draw`/`process`. Run **one or the other**, never both: they would
+each write `/detections`.
+
+They are not interchangeable on rate, though. OWLv2 runs ~2 fps against
+YOLO11n's ~30, and it does not improve with a smaller camera image because
+OWLv2 letterboxes every input to 960×960 internally. So `locate_node`
+subscribes with **depth-1 best-effort QoS** — while a frame is in flight the
+newer ones are dropped rather than queued, because a slow consumer that
+backlogs a sensor stream ends up publishing detections for a scene that is
+seconds stale. Nothing in the control path depends on `/detections`
+(`decision_node` reads `/gesture`), so the slow detector cannot stall actuation.
 
 ## Four decisions worth explaining
 
