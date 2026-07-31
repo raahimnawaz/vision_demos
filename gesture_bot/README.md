@@ -20,9 +20,25 @@ imported unchanged by the **ROS2** node graph in [`../ros2/`](../ros2/).
   backend with port auto-detect, diff-drive→servo-µs protocol, and a watchdog failsafe.
 - **Phase 3 (done):** the same modules wrapped as ROS2 nodes — `/image_raw` →
   `/gesture` → `/cmd_vel`, plus `/detections`. See [`../ros2/`](../ros2/).
-- **Phase 4 (next):** drive a physical board, recorded. See the roadmap in the
-  [repo README](../README.md) — the deliverable is where the real actuator
-  diverges from `actuators.py`'s integrator, not the video.
+- **Phase 4 (in progress):** drive a physical board, recorded. **Instrumented,
+  awaiting hardware.** The firmware now acknowledges each applied command
+  (opt-in) and [`phase4_measure.py`](phase4_measure.py) measures round-trip
+  latency, servo deadband, and commanded-vs-applied pulse width. The deliverable
+  is where the real actuator diverges from `actuators.py`, not the video — see
+  the roadmap in the [repo README](../README.md).
+
+```bash
+# check your invocation against the software model, no board needed
+python phase4_measure.py latency --simulate --n 200
+
+# then the real thing
+python phase4_measure.py latency  --port /dev/ttyACM0 --n 300
+python phase4_measure.py deadband --port /dev/ttyACM0
+python phase4_measure.py step     --port /dev/ttyACM0 --csv step.csv
+```
+
+On WSL the board needs `usbipd` attached first — see
+[`firmware/README.md`](firmware/).
 
 ## Run (Phase 1)
 ```bash
@@ -66,12 +82,14 @@ Keys: `q` quit · `s` screenshot · `space` reset.
 | `decision.py` | debounced gesture→Twist state machine | yes (`decision_node`) |
 | `actuators.py` | Actuator HAL: Sim / Serial / HID | yes (`base_driver_node`) |
 | `run_local.py` | wires the loop (no ROS2) | replaced by the launch file |
+| `fake_device.py` | software model of the firmware, as a serial transport | — (test/measurement) |
+| `phase4_measure.py` | latency / deadband / step-response harness | — (bench tool) |
 | `firmware/` | Arduino sketch + Wokwi project for the serial backend | — (runs on the MCU) |
 
 ## Tests
 
 ```bash
-pytest tests -v                  # 25 tests, no camera / GPU / Arduino needed
+pytest tests -v                  # 37 tests, no camera / GPU / Arduino needed
 ```
 
 | file | covers |
@@ -80,6 +98,7 @@ pytest tests -v                  # 25 tests, no camera / GPU / Arduino needed
 | `test_sim.py` | diff-drive kinematics, unicycle integrator, arena clamp, serial framing |
 | `test_serial_live.py` | the live write path against an injected fake transport |
 | `test_framing.py` | the display-coordinate contract and its steering sign |
+| `test_phase4.py` | the ack protocol, and that the instrument recovers an injected latency |
 
 Each file also runs standalone (`python tests/test_decision.py`) with a plain
 pass/fail summary, for when pytest isn't installed.

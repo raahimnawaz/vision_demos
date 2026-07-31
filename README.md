@@ -96,7 +96,7 @@ without physical hardware.
 | 1 | Perception library — YOLO11, MediaPipe hands, face mesh | ✅ done |
 | 2 | Arduino serial actuation — firmware, byte framing, Wokwi | ✅ done |
 | 3 | ROS2 node graph — `/image_raw` → `/gesture` → `/cmd_vel` | ✅ done |
-| 4 | Drive real hardware, recorded | ⬜ |
+| 4 | Drive real hardware, recorded | 🚧 instrumented; awaiting a board |
 | 5 | Open-vocabulary detector node | 🚧 model swapped; node pending |
 | 6 | Latency budget, gesture → motion | ⬜ |
 | 7 | rosbag regression test in CI | ⬜ |
@@ -110,6 +110,34 @@ diverges from `actuators.py`'s integrator: serial round-trip latency, servo
 deadband, and the gap between commanded `(v, ω)` and what the hardware actually
 did. **That discrepancy is the deliverable; the video is only evidence it
 happened.**
+
+*Instrumentation is in place; the run needs a board.* Measuring any of that was
+impossible before: the firmware never replied and `SerialServo` never read, so
+round-trip latency had no definition, let alone a value. The board now
+acknowledges each applied command with its **post-clamp** pulse widths and its
+own `millis()` — opt-in, because a host that never reads would stall `loop()`.
+[`phase4_measure.py`](gesture_bot/phase4_measure.py) turns that into three
+numbers:
+
+```bash
+python gesture_bot/phase4_measure.py latency  --port /dev/ttyACM0 --n 300
+python gesture_bot/phase4_measure.py deadband --port /dev/ttyACM0
+python gesture_bot/phase4_measure.py step     --port /dev/ttyACM0 --csv step.csv
+```
+
+The expectation it measures against is written down and executable:
+[`fake_device.py`](gesture_bot/fake_device.py) models the sketch with ideal
+timing, exact clamping, and a linear response outside a nominal deadband. Every
+way the real board fails to match it is a finding — and because the harness runs
+against that model with `--simulate`, it is tested before it ever meets
+hardware. It recovers an injected latency and deadband to within the sweep
+resolution, which is the least you should demand of an instrument.
+
+Two known unknowns worth stating now: `actuators.py` maps wheel speed linearly
+onto `[1000, 2000]` µs with **no deadband at all**, so some band of commands
+around stop is already known to do nothing — the open question is its width and
+asymmetry. And `decision.py` reasons in *frames*; the latency figure is what
+converts `stable_frames` and `lost_frames` into milliseconds.
 
 **Phase 5 — open-vocabulary detector node.** Half done.
 

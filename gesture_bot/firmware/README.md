@@ -16,6 +16,46 @@ sketch drives two continuous-rotation servos accordingly, with a watchdog failsa
 **Failsafe:** if no valid command arrives for 500 ms, both wheels stop (handles a
 yanked cable or a crashed host). The onboard LED (D13) is lit while commands flow.
 
+## Telemetry (Phase 4)
+
+Off by default. `SerialServo(expect_ack=True)` turns it on by sending `T1`;
+`T0` turns it back off.
+
+| line | direction | meaning |
+|---|---|---|
+| `T1` / `T0` | host → board | enable / disable acknowledgements |
+| `A,<seq>,<left_us>,<right_us>,<millis>` | board → host | a command was applied |
+| `W,<millis>` | board → host | the watchdog stopped the wheels |
+
+`seq` counts commands the **board** accepted, so a jump tells the host that
+commands went unacknowledged. The `*_us` values are **post-clamp** — that is how
+host-side clamping gets checked against what the board actually did, rather than
+against what the host believes it asked for. `W` fires once on the transition,
+not repeatedly while stopped.
+
+It is opt-in because a host that never reads would let the ack stream fill the
+USB buffer and stall `loop()`. Silence stays the default, so `run_local.py` and
+the Wokwi walkthrough below are unaffected.
+
+## Getting the board into WSL
+
+The Arduino enumerates on **Windows** as a COM port; WSL cannot see it without
+[usbipd-win](https://github.com/dorssel/usbipd-win). From an **admin** PowerShell:
+
+```powershell
+winget install usbipd
+usbipd list                          # find the Arduino's BUSID
+usbipd bind   --busid <BUSID>        # once per board, persists across reboots
+usbipd attach --wsl --busid <BUSID>  # once per WSL session
+```
+
+It then appears in WSL as `/dev/ttyACM0` (or `/dev/ttyUSB0` for CH340 clones),
+and `SerialServo.find_arduino_port()` picks it up. You may need
+`sudo usermod -aG dialout $USER` plus a new login for permissions.
+
+Alternatively, skip WSL entirely and run the host side from Windows against
+`COM<n>` — the serial path has no Linux dependency.
+
 ## Wiring
 | signal | Arduino pin |
 |---|---|

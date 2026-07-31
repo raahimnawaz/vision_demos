@@ -170,7 +170,7 @@ class SerialServo(Actuator):
     name = "serial"
 
     def __init__(self, port=None, baud=115200, wheel_base=0.3, v_max=1.0,
-                 dry_run=True, transport=None):
+                 dry_run=True, transport=None, expect_ack=False):
         self.wheel_base = wheel_base
         self.v_max = v_max
         self._last_cmd = "-"
@@ -184,6 +184,21 @@ class SerialServo(Actuator):
             self.dry_run = False
         else:                                # no port -> just format, don't send
             self.dry_run = True
+
+        # --- Phase 4 instrumentation (opt-in) ---------------------------------
+        # Requires a transport that can be read from, so a dry run or the
+        # write-only fake in the framing tests silently stays uninstrumented.
+        self.expect_ack = bool(expect_ack) and hasattr(self._transport, "readline")
+        self.latencies_ms = []
+        self.last_latency_ms = None
+        self.last_ack = None                 # (seq, left_us, right_us, device_ms)
+        self.acks_received = 0
+        self.acks_missed = 0
+        self.seq_gaps = 0                    # commands the device never acked
+        self.watchdog_events = 0
+        self._expected_seq = 0
+        if self.expect_ack:
+            self._send("T1\n")               # firmware default is silent
 
     @staticmethod
     def find_arduino_port():
@@ -200,21 +215,118 @@ class SerialServo(Actuator):
         frac = max(-1.0, min(1.0, wheel_speed / self.v_max))
         return int(1500 + frac * 500)
 
-    def _write(self, line):
-        self._last_cmd = line.strip()
+    def _send(self, line):
+        """Raw write. Control lines go here so they never become _last_cmd."""
         if self._transport is not None:
             self._transport.write(line.encode())
 
+    def _write(self, line):
+        self._last_cmd = line.strip()
+        self._send(line)
+
+    def _read_ack(self, timeout_s=0.25):
+        """Read one 'A,...' acknowledgement, or None if the device stayed quiet.
+
+        Watchdog notices are counted and skipped rather than returned -- they
+        are unsolicited, so treating one as this command's ack would attribute
+        the wrong latency to it.
+
+        Polls rather than sleeping: a real port's own read timeout does the
+        waiting, and adding a sleep here would quantise the latency figure this
+        exists to measure.
+        """
+        deadline = time.perf_counter() + timeout_s
+        while time.perf_counter() < deadline:
+            raw = self._transport.readline()
+            if not raw:
+                continue
+            text = raw.decode(errors="replace").strip()
+            if text.startswith("W,"):
+                self.watchdog_events += 1
+                continue
+            if not text.startswith("A,"):
+                continue
+            parts = text.split(",")
+            if len(parts) != 5:
+                continue
+            try:
+                seq, left_us, right_us, device_ms = (int(p) for p in parts[1:])
+            except ValueError:
+                continue
+            self.acks_received += 1
+            self._expected_seq += 1
+            if seq != self._expected_seq:
+                # The device counts every command it accepted, so a jump means
+                # commands went unacknowledged between here and there.
+                self.seq_gaps += seq - self._expected_seq
+                self._expected_seq = seq
+            self.last_ack = (seq, left_us, right_us, device_ms)
+            return self.last_ack
+        return None
+
+    def _send_us(self, left_us, right_us):
+        """Write one pulse-width pair and, if instrumented, time its ack."""
+        line = f"{left_us},{right_us}\n"
+        if not self.expect_ack:
+            self._write(line)
+            return None
+
+        t0 = time.perf_counter()
+        self._write(line)
+        ack = self._read_ack()
+        if ack is None:
+            self.acks_missed += 1
+            self.last_latency_ms = None
+        else:
+            self.last_latency_ms = (time.perf_counter() - t0) * 1000.0
+            self.latencies_ms.append(self.last_latency_ms)
+        return ack
+
+    def write_us(self, left_us, right_us):
+        """Send raw pulse widths, bypassing the (v, w) mapping.
+
+        Phase 4's deadband sweep walks pulse width directly; going through
+        apply() would quantise it through _to_us and v_max, which is the very
+        mapping the sweep exists to find the error in. Returns the ack or None.
+        """
+        return self._send_us(int(left_us), int(right_us))
+
     def apply(self, linear_x, angular_z, dt):
         left, right = diff_drive(linear_x, angular_z, self.wheel_base)
-        self._write(f"{self._to_us(left)},{self._to_us(right)}\n")
+        self._send_us(self._to_us(left), self._to_us(right))
 
     def telemetry(self):
         tag = "dry" if self.dry_run else "LIVE"
-        return [f"serial[{tag}]: {self._last_cmd} us"]
+        line = f"serial[{tag}]: {self._last_cmd} us"
+        if self.expect_ack and self.last_latency_ms is not None:
+            return [line, f"rtt {self.last_latency_ms:5.1f} ms  "
+                          f"acks {self.acks_received} miss {self.acks_missed}"]
+        return [line]
+
+    def latency_stats(self):
+        """Round-trip latency summary in ms, or None if nothing was measured."""
+        if not self.latencies_ms:
+            return None
+        ordered = sorted(self.latencies_ms)
+        last = len(ordered) - 1
+
+        def pct(p):
+            return ordered[min(last, int(round(p / 100.0 * last)))]
+
+        return {
+            "n": len(ordered),
+            "min": ordered[0],
+            "mean": sum(ordered) / len(ordered),
+            "p50": pct(50),
+            "p95": pct(95),
+            "p99": pct(99),
+            "max": ordered[-1],
+        }
 
     def close(self):
         self._write("1500,1500\n")           # failsafe: stop before disconnecting
+        if self.expect_ack:
+            self._send("T0\n")               # leave the board quiet for the next host
         if self._transport is not None:
             self._transport.close()
 
