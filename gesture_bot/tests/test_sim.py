@@ -36,12 +36,34 @@ def test_sim_rotation_changes_heading():
     assert abs(bot.theta - th0) > 0.5
 
 
-def test_sim_stays_in_arena():
+def test_sim_clamps_at_the_arena_margin():
+    """Driving into a wall must stop AT the margin, not merely stay in bounds.
+
+    The previous assertion was `0 <= x <= world_m`, which is looser than the
+    clamp itself (`[0.1, world_m - 0.1]`) -- it passed for any clamp value, and
+    for no clamp at all as long as the robot happened to still be inside. Pin
+    the actual boundary instead.
+    """
     bot = SimRobot(world_m=4.0)
     for _ in range(1000):
-        bot.apply(5.0, 0.0, dt=0.1)   # drive hard into a wall
-    assert 0.0 <= bot.x <= bot.world_m
-    assert 0.0 <= bot.y <= bot.world_m
+        bot.apply(5.0, 0.0, dt=0.1)             # drive hard into the +x wall
+    assert abs(bot.x - (bot.world_m - SimRobot.WALL_MARGIN)) < 1e-12
+    assert abs(bot.y - 2.0) < 1e-9              # heading is +x, so y must not move
+
+    for _ in range(1000):
+        bot.apply(-5.0, 0.0, dt=0.1)            # and back into the -x wall
+    assert abs(bot.x - SimRobot.WALL_MARGIN) < 1e-12
+
+
+def test_sim_clamp_is_not_a_bounce():
+    """Hitting a wall pins the robot; it does not reflect and drive back."""
+    bot = SimRobot(world_m=4.0)
+    for _ in range(1000):
+        bot.apply(5.0, 0.0, dt=0.1)
+    pinned = bot.x
+    bot.apply(5.0, 0.0, dt=0.1)                 # still commanded into the wall
+    assert bot.x == pinned, "clamped robot should stay put, not rebound"
+    assert bot.theta == 0.0, "heading must be unchanged by the clamp"
 
 
 def test_serial_protocol_format_and_range():

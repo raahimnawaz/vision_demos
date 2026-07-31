@@ -51,6 +51,8 @@ class SimRobot(Actuator):
     """Top-down 2D differential-drive robot integrated with a unicycle model."""
     name = "sim"
 
+    WALL_MARGIN = 0.1        # m from the arena edge; see the clamp in apply()
+
     def __init__(self, world_m=6.0, px_per_m=90, wheel_base=0.3):
         self.world_m = world_m
         self.px_per_m = px_per_m
@@ -72,9 +74,12 @@ class SimRobot(Actuator):
         self.theta = (self.theta + angular_z * dt) % (2 * math.pi)
         self.x += linear_x * math.cos(self.theta) * dt
         self.y += linear_x * math.sin(self.theta) * dt
-        # keep inside the arena (bounce off walls)
-        self.x = min(max(self.x, 0.1), self.world_m - 0.1)
-        self.y = min(max(self.y, 0.1), self.world_m - 0.1)
+        # Keep inside the arena. This is a clamp, not a bounce: the robot stops
+        # at the wall and keeps its heading, so a command driving into the wall
+        # stays pinned there until the command changes.
+        lo, hi = self.WALL_MARGIN, self.world_m - self.WALL_MARGIN
+        self.x = min(max(self.x, lo), hi)
+        self.y = min(max(self.y, lo), hi)
         self.trail.append((self.x, self.y))
         if len(self.trail) > 400:
             self.trail.pop(0)
