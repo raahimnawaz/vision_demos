@@ -4,22 +4,22 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-Local, GPU-accelerated computer vision on Apple Silicon (MPS / Metal; CUDA on
-Linux), building up to a closed perception → decision → actuation loop.
-
-Three self-contained projects, increasing in ambition:
+A closed **perception → decision → actuation** loop: webcam gestures drive a
+robot base, as a plain Python loop *and* as a ROS2 node graph — with the same
+control logic imported unchanged by both, and a real Arduino at the end of it.
 
 | folder | what it is |
 |---|---|
-| [`object_detection/`](object_detection/) | Realtime webcam demos — YOLO11 object detection, MediaPipe hand tracking, face mesh, and an all-in-one overlay (~30 fps). |
-| [`locateanything/`](locateanything/) | Open-vocabulary localization with NVIDIA's **LocateAnything-3B** vision-language model via MLX — describe an object in words, get boxes. |
-| [`gesture_bot/`](gesture_bot/) | **The headline project.** Webcam **gestures → decision → actuation**, with pluggable backends (2D sim, Arduino serial, computer HID) behind one `Twist`-style command. |
-| [`ros2/`](ros2/) | The same loop as a **ROS2 node graph** — `/image_raw` → `/gesture` → `/cmd_vel`, reusing the modules below unchanged. |
+| [`gesture_bot/`](gesture_bot/) | **The project.** Webcam **gestures → decision → actuation**, with pluggable backends (2D sim, Arduino serial, computer HID) behind one `Twist`-style command. |
+| [`ros2/`](ros2/) | The same loop as a **ROS2 node graph** — `/image_raw` → `/gesture` → `/cmd_vel`. The nodes add no control logic; they import the modules below unchanged. |
+| [`object_detection/`](object_detection/) | The **perception library** the rest of the repo is built on — `ObjectDetector` (YOLO11) plus `HandTracker` and `FaceMesh` (MediaPipe), imported by both `detector_node` and `gesture_bot/perception.py`. Also runs standalone as a webcam demo. |
+| [`locateanything/`](locateanything/) | Open-vocabulary localization with NVIDIA's **LocateAnything-3B** via MLX — describe an object in words, get boxes. Apple Silicon only, and not yet wired into the loop (Phase 5). |
 
 ## gesture_bot — closing the loop
 
-The other two folders stop at perception: pixels in, boxes out. `gesture_bot`
-carries a perception result all the way to something that moves.
+`object_detection/` and `locateanything/` stop at perception: pixels in, boxes
+out. `gesture_bot` carries a perception result all the way to something that
+moves.
 
 ```
 webcam ─[MediaPipe]→ gesture ─[debounced state machine]→ (v, ω) ─[actuator]→ sim | Arduino | HID
@@ -72,6 +72,74 @@ is tested against an injected fake transport that asserts the exact bytes the
 firmware receives, and the sketch runs in [Wokwi](gesture_bot/firmware/wokwi/)
 without physical hardware.
 
+## Roadmap
+
+| Phase | What | State |
+|------|------|-------|
+| 1 | Perception library — YOLO11, MediaPipe hands, face mesh | ✅ done |
+| 2 | Arduino serial actuation — firmware, byte framing, Wokwi | ✅ done |
+| 3 | ROS2 node graph — `/image_raw` → `/gesture` → `/cmd_vel` | ✅ done |
+| 4 | Drive real hardware, recorded | ⬜ |
+| 5 | Open-vocabulary detector node | ⬜ |
+| 6 | Latency budget, gesture → motion | ⬜ |
+| 7 | rosbag regression test in CI | ⬜ |
+
+**Phase 4 — drive real hardware, recorded.** Everything through Phase 3 runs
+against a simulated base, a dry-run serial port, or Wokwi. The framing is
+asserted byte-for-byte against an injected fake transport, which proves the
+protocol and proves nothing about a motor. This phase is a recorded run of a
+gesture turning a physical servo — and, more usefully, where the real actuator
+diverges from `actuators.py`'s integrator: serial round-trip latency, servo
+deadband, and the gap between commanded `(v, ω)` and what the hardware actually
+did. **That discrepancy is the deliverable; the video is only evidence it
+happened.**
+
+**Phase 5 — open-vocabulary detector node.** Wrap `locateanything/` as
+`locate_node`, publishing the same `vision_msgs/Detection2DArray` on
+`/detections` that `detector_node` already does — so closed-vocabulary YOLO and
+open-vocabulary text queries become a launch-time swap with nothing downstream
+changed. The measurement that makes it more than a model demo: open-vocab is
+slower and less precise on the classes YOLO already knows, so quantify both and
+say when each is the right tool. MLX pins this phase to Apple Silicon.
+
+**Phase 6 — latency budget.** Per-node processing time, and end-to-end latency
+from hand movement to motor response. How much does enabling `detector_node`
+cost the gesture path, and where does the time actually go? The decision layer
+currently reasons in frames (`stable_frames`, `lost_frames`); this converts
+those into milliseconds, which is the unit that starts to matter once hardware
+is in the loop.
+
+**Phase 7 — rosbag regression in CI.** [`ros2/README.md`](ros2/) already argues
+for recording `/image_raw`, because that is how you debug a perception bug more
+than once. This finishes the thought: commit a short bag, replay it in CI, and
+assert the decision layer emits the expected command sequence. Perception
+regression testing with no camera, no GPU, and no board — the same property that
+keeps `decision.py` dependency-free, extended to the whole graph.
+
+Order is deliberate. **Phase 4 is worth more than 5, 6 and 7 combined**, because
+it is the only one that produces something a simulator cannot fake.
+
+## What runs where
+
+Developed across an Apple Silicon Mac and a Linux/WSL box. Not every part runs
+in both places, and the two gaps pull in opposite directions:
+
+| component | Apple Silicon | Linux / WSL |
+|---|---|---|
+| YOLO11 (`ObjectDetector`) | ✅ MPS | ✅ CUDA, or CPU |
+| MediaPipe (hands, face mesh) | ✅ | ✅ |
+| `gesture_bot` — sim / HID / Arduino serial | ✅ | ✅ |
+| ROS2 node graph ([`ros2/`](ros2/)) | ❌ no supported macOS path | ✅ Jazzy |
+| LocateAnything-3B ([`locateanything/`](locateanything/)) | ✅ MLX | ❌ MLX is Apple-only |
+
+So the ROS2 graph is Linux-side and the open-vocabulary model is Mac-side, which
+is why Phase 5 below is scoped as a Mac task. Everything in the middle —
+the perception library, the decision layer, and all three actuator backends —
+runs in both, which is the point of keeping `decision.py` dependency-free.
+
+`default_device()` in [`object_detection/vision_demo.py`](object_detection/vision_demo.py)
+resolves MPS → CUDA → CPU at runtime, so nothing needs configuring by hand.
+
 ## Setup
 
 ```bash
@@ -107,7 +175,8 @@ point of keeping `decision.py` dependency-free.
 ## Layout
 
 ```
-object_detection/   YOLO + MediaPipe webcam demos
+object_detection/   perception library — ObjectDetector / HandTracker / FaceMesh
+                    (imported by gesture_bot and by ros2/detector_node)
 locateanything/     NVIDIA LocateAnything-3B (MLX) — open-vocabulary localization
 gesture_bot/        gesture → decision → actuation (sim / Arduino / HID)
   ├─ perception.py    MediaPipe gesture recognition
